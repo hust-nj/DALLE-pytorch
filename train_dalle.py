@@ -20,7 +20,7 @@ from torchvision.utils import make_grid, save_image
 
 from dalle_pytorch import OpenAIDiscreteVAE, DiscreteVAE, DALLE
 from dalle_pytorch.simple_tokenizer import tokenize, tokenizer, VOCAB_SIZE
-
+import json
 # argument parsing
 
 parser = argparse.ArgumentParser()
@@ -126,7 +126,7 @@ class TextImageDataset(Dataset):
         super().__init__()
         path = Path(folder)
 
-        text_files = [*path.glob('**/*.txt')]
+        text_files = [*path.glob('**/*.json')]
 
         image_files = [
             *path.glob('**/*.png'),
@@ -134,13 +134,24 @@ class TextImageDataset(Dataset):
             *path.glob('**/*.jpeg')
         ]
 
-        text_files = {t.stem: t for t in text_files}
+        # text_files = {t.stem: t for t in text_files}
+        assert len(text_files) == 1, "only support one annotation json file"
+        
+        key2text = {}
+        with text_files[0].open() as f:
+            lines = f.readlines()
+            for l in lines:
+                caption_image = json.loads(l)
+                caption = caption_image['caption']
+                image = caption_image['image']
+                key = Path(image).stem
+                key2text[key] = caption
         image_files = {i.stem: i for i in image_files}
 
-        keys = (image_files.keys() & text_files.keys())
+        keys = (image_files.keys() & key2text.keys())
 
         self.keys = list(keys)
-        self.text_files = {k: v for k, v in text_files.items() if k in keys}
+        self.key2text = {k: v for k, v in key2text.items() if k in keys}
         self.image_files = {k: v for k, v in image_files.items() if k in keys}
 
         self.image_tranform = T.Compose([
@@ -155,14 +166,13 @@ class TextImageDataset(Dataset):
 
     def __getitem__(self, ind):
         key = self.keys[ind]
-        text_file = self.text_files[key]
+        text = self.key2text[key]
         image_file = self.image_files[key]
 
         image = Image.open(image_file)
-        descriptions = text_file.read_text().split('\n')
-        descriptions = list(filter(lambda t: len(t) > 0, descriptions))
-        description = choice(descriptions)
+        description = text
 
+        description = ' '.join(description)
         tokenized_text = tokenize(description).squeeze(0)
         mask = tokenized_text != 0
 
