@@ -108,7 +108,7 @@ class SparseConvCausalAttention(nn.Module):
 
         q *= self.scale
 
-        ((q_text, q_img), (k_text, k_img), (v_text, v_img)) = map(lambda t: (t[:, img_seq_len:], t[:, -img_seq_len:]), (q, k, v))
+        ((q_text, q_img), (k_text, k_img), (v_text, v_img)) = map(lambda t: (t[:, :-img_seq_len], t[:, -img_seq_len:]), (q, k, v))
 
         # text attention
 
@@ -129,7 +129,7 @@ class SparseConvCausalAttention(nn.Module):
 
         k_img, v_img = map(lambda t: rearrange(t, 'b (h w) c -> b c h w', h = img_size), (k_img, v_img))
         k_img, v_img = map(lambda t: F.unfold(t, kernel_size, padding = padding, dilation = dilation), (k_img, v_img))
-        k_img, v_img = map(lambda t: rearrange(t, 'b (j d) i -> b i j d', j = kernel_size ** 2), (k_img, v_img))
+        k_img, v_img = map(lambda t: rearrange(t, 'b (d j) i -> b i j d', j = kernel_size ** 2), (k_img, v_img))
 
         k_text, v_text = map(lambda t: repeat(t, 'b j d -> b i j d', i = img_seq_len), (k_text, v_text))
 
@@ -152,7 +152,7 @@ class SparseConvCausalAttention(nn.Module):
         # mask image attention
 
         q_img_indices = rearrange(img_seq, 'i -> () i ()')
-        causal_mask =  q_img_indices >= k_img_indices
+        causal_mask =  q_img_indices < k_img_indices
 
         # concat text mask with image causal mask
 
@@ -217,7 +217,7 @@ class SparseAxialCausalAttention(nn.Module):
 
         q *= self.scale
 
-        ((q_text, q_img), (k_text, k_img), (v_text, v_img)) = map(lambda t: (t[:, img_seq_len:], t[:, -img_seq_len:]), (q, k, v))
+        ((q_text, q_img), (k_text, k_img), (v_text, v_img)) = map(lambda t: (t[:, :-img_seq_len], t[:, -img_seq_len:]), (q, k, v))
 
         # text attention
 

@@ -14,9 +14,13 @@ Before we replicate this, we can settle for <a href="https://github.com/lucidrai
 
 ## Status
 
-<a href="https://github.com/htoyryla">Hannu</a> has managed to train a small 6 layer DALL-E on a dataset of just 2000 landscape images! (2048 visual tokens)
+- <a href="https://github.com/htoyryla">Hannu</a> has managed to train a small 6 layer DALL-E on a dataset of just 2000 landscape images! (2048 visual tokens)
 
 <img src="./images/landscape.png"></img>
+
+- <a href="https://github.com/kobiso">Kobiso</a>, a research engineer from Naver, has trained on both the CUBS and COCO dataset <a href="https://github.com/lucidrains/DALLE-pytorch/issues/38#issuecomment-778735034">here</a>, using full and deepspeed sparse attention
+- <a href="https://github.com/afiaka87">afiaka87</a> has managed one epoch using a 32 layer reversible DALL-E <a href="https://github.com/lucidrains/DALLE-pytorch/issues/86#issue-832121328">here</a>
+- <a href="https://github.com/robvanvolt">robvanvolt</a> has started a <a href="https://discord.gg/R64srpKJ">Discord channel</a> for replication efforts
 
 ## Install
 
@@ -92,6 +96,21 @@ images = dalle.generate_images(text, mask = mask)
 images.shape # (4, 3, 256, 256)
 ```
 
+To prime with a starting crop of an image, simply pass two more arguments
+
+```python
+img_prime = torch.randn(4, 3, 256, 256)
+
+images = dalle.generate_images(
+    text,
+    mask = mask,
+    img = img_prime,
+    num_init_img_tokens = (14 * 32)  # you can set the size of the initial crop, defaults to a little less than ~1/2 of the tokens, as done in the paper
+)
+
+images.shape # (4, 3, 256, 256)
+```
+
 ## OpenAI's Pretrained VAE
 
 You can also skip the training of the VAE altogether, using the pretrained model released by OpenAI! The wrapper class should take care of downloading and caching the model for you auto-magically.
@@ -120,6 +139,20 @@ mask = torch.ones_like(text).bool()
 
 loss = dalle(text, images, mask = mask, return_loss = True)
 loss.backward()
+```
+
+## Taming Transformer's Pretrained VQGAN VAE
+
+You can also use the pretrained VAE offered by the authors of <a href="https://github.com/CompVis/taming-transformers">Taming Transformers</a>! Currently only the VAE with a codebook size of 1024 is offered, with the hope that it may train a little faster than OpenAI's, which has a size of 8192.
+
+In contrast to OpenAI's VAE, it also has an extra layer of downsampling, so the image sequence length is 256 instead of 1024 (this will lead to a 16 reduction in training costs, when you do the math). Whether it will generalize as well as the original DALL-E is up to the citizen scientists out there to discover.
+
+```python
+from dalle_pytorch import VQGanVAE1024
+
+vae = VQGanVAE1024()
+
+# the rest is the same as the above example
 ```
 
 ## Ranking the generations
@@ -368,6 +401,17 @@ You should see your images saved as `./outputs/{your prompt}/{image number}.jpg`
     eprint  = {2001.04451},
     archivePrefix = {arXiv},
     primaryClass = {cs.LG}
+}
+```
+
+```bibtex
+@misc{esser2021taming,
+    title   = {Taming Transformers for High-Resolution Image Synthesis},
+    author  = {Patrick Esser and Robin Rombach and Björn Ommer},
+    year    = {2021},
+    eprint  = {2012.09841},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.CV}
 }
 ```
 

@@ -7,6 +7,7 @@ from axial_positional_embedding import AxialPositionalEmbedding
 from einops import rearrange
 
 from dalle_pytorch.vae import OpenAIDiscreteVAE
+from dalle_pytorch.vae import VQGanVAE1024
 from dalle_pytorch.transformer import Transformer
 
 # helpers
@@ -303,7 +304,7 @@ class DALLE(nn.Module):
         attn_types = None
     ):
         super().__init__()
-        assert isinstance(vae, (DiscreteVAE, OpenAIDiscreteVAE)), 'vae must be an instance of DiscreteVAE'
+        assert isinstance(vae, (DiscreteVAE, OpenAIDiscreteVAE, VQGanVAE1024)), 'vae must be an instance of DiscreteVAE'
 
         image_size = vae.image_size
         num_image_tokens = vae.num_tokens
@@ -371,14 +372,31 @@ class DALLE(nn.Module):
         clip = None,
         mask = None,
         filter_thres = 0.5,
-        temperature = 1.
+        temperature = 1.,
+        img = None,
+        num_init_img_tokens = None
     ):
         vae, text_seq_len, image_seq_len, num_text_tokens = self.vae, self.text_seq_len, self.image_seq_len, self.num_text_tokens
         total_len = text_seq_len + image_seq_len
 
+        text = text[:, :text_seq_len] # make sure text is within bounds
         out = text
 
-        for cur_len in range(text.shape[1], total_len):
+        if exists(img):
+            image_size = vae.image_size
+            assert img.shape[1] == 3 and img.shape[2] == image_size and img.shape[3] == image_size, f'input image must have the correct image size {image_size}'
+
+            indices = vae.get_codebook_indices(img)
+            num_img_tokens = default(num_init_img_tokens, int(0.4375 * image_seq_len))  # OpenAI used 14 * 32 initial tokens to prime
+            assert num_img_tokens < image_seq_len, 'number of initial image tokens for priming must be less than the total image token sequence length'
+
+            indices = indices[:, :num_img_tokens]
+            out = torch.cat((out, indices), dim = -1)
+
+            if exists(mask):
+                mask = F.pad(mask, (0, num_img_tokens), value = True)
+
+        for cur_len in range(out.shape[1], total_len):
             is_image = cur_len >= text_seq_len
 
             text, image = out[:, :text_seq_len], out[:, text_seq_len:]

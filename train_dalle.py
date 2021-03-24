@@ -18,7 +18,7 @@ from torchvision.utils import make_grid, save_image
 
 # dalle related classes and utils
 
-from dalle_pytorch import OpenAIDiscreteVAE, DiscreteVAE, DALLE
+from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE1024, DiscreteVAE, DALLE
 from dalle_pytorch.simple_tokenizer import tokenize, tokenizer, VOCAB_SIZE
 import json
 # argument parsing
@@ -35,6 +35,8 @@ group.add_argument('--dalle_path', type = str,
 
 parser.add_argument('--image_text_folder', type = str, required = True,
                     help='path to your folder of images and text for learning the DALL-E')
+
+parser.add_argument('--taming', dest='taming', action='store_true')
 
 args = parser.parse_args()
 
@@ -59,6 +61,7 @@ TEXT_SEQ_LEN = 256
 DEPTH = 2
 HEADS = 4
 DIM_HEAD = 64
+REVERSIBLE = True
 
 # reconstitute vae
 
@@ -66,19 +69,20 @@ if RESUME:
     dalle_path = Path(DALLE_PATH)
     assert dalle_path.exists(), 'DALL-E model file does not exist'
 
-    loaded_obj = torch.load(str(dalle_path))
+    loaded_obj = torch.load(str(dalle_path), map_location='cpu')
 
     dalle_params, vae_params, weights = loaded_obj['hparams'], loaded_obj['vae_params'], loaded_obj['weights']
 
-    vae = DiscreteVAE(**vae_params)
-
-    dalle_params = dict(
-        vae = vae,
+    if vae_params is not None:
+        vae = DiscreteVAE(**vae_params)
+    else:
+        vae_klass = OpenAIDiscreteVAE if not args.taming else VQGanVAE1024
+        vae = vae_klass()
+        
+    dalle_params = dict(        
         **dalle_params
     )
-
-    IMAGE_SIZE = vae_params['image_size']
-
+    IMAGE_SIZE = vae.image_size
 else:
     if exists(VAE_PATH):
         vae_path = Path(VAE_PATH)
@@ -91,21 +95,22 @@ else:
         vae = DiscreteVAE(**vae_params)
         vae.load_state_dict(weights)
     else:
-        print('using OpenAIs pretrained VAE for encoding images to tokens')
+        print('using pretrained VAE for encoding images to tokens')
         vae_params = None
 
-        vae = OpenAIDiscreteVAE()
+        vae_klass = OpenAIDiscreteVAE if not args.taming else VQGanVAE1024
+        vae = vae_klass()
 
     IMAGE_SIZE = vae.image_size
 
     dalle_params = dict(
-        vae = vae,
         num_text_tokens = VOCAB_SIZE,
         text_seq_len = TEXT_SEQ_LEN,
         dim = MODEL_DIM,
         depth = DEPTH,
         heads = HEADS,
-        dim_head = DIM_HEAD
+        dim_head = DIM_HEAD,
+        reversible = REVERSIBLE
     )
 
 # helpers
@@ -156,8 +161,7 @@ class TextImageDataset(Dataset):
 
         self.image_tranform = T.Compose([
             T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-            T.CenterCrop(image_size),
-            T.Resize(image_size),
+            T.RandomResizedCrop(image_size, scale = (0.6, 1.), ratio = (1., 1.)),
             T.ToTensor()
         ])
 
@@ -194,7 +198,7 @@ dl = DataLoader(ds, batch_size = BATCH_SIZE, shuffle = True, drop_last = True)
 
 # initialize DALL-E
 
-dalle = DALLE(**dalle_params).cuda()
+dalle = DALLE(vae = vae, **dalle_params).cuda()
 
 if RESUME:
     dalle.load_state_dict(weights)
@@ -207,11 +211,13 @@ opt = Adam(dalle.parameters(), lr = LEARNING_RATE)
 
 import wandb
 
-wandb.config.depth = DEPTH
-wandb.config.heads = HEADS
-wandb.config.dim_head = DIM_HEAD
+model_config = dict(
+    depth = DEPTH,
+    heads = HEADS,
+    dim_head = DIM_HEAD
+)
 
-wandb.init(project = 'dalle_train_transformer', resume = RESUME)
+run = wandb.init(project = 'dalle_train_transformer', resume = RESUME, config = model_config)
 
 # training
 
@@ -260,6 +266,16 @@ for epoch in range(EPOCHS):
 
         wandb.log(log)
 
+    # save trained model to wandb as an artifact every epoch's end
+
+    model_artifact = wandb.Artifact('trained-dalle', type = 'model', metadata = dict(model_config))
+    model_artifact.add_file('dalle.pt')
+    run.log_artifact(model_artifact)
+
 save_model(f'./dalle-final.pt')
 wandb.save('./dalle-final.pt')
+model_artifact = wandb.Artifact('trained-dalle', type = 'model', metadata = dict(model_config))
+model_artifact.add_file('dalle-final.pt')
+run.log_artifact(model_artifact)
+
 wandb.finish()
